@@ -13,11 +13,14 @@ from pydantic import BaseModel, Field
 from tools.scoring import compute_hybrid_score, score_to_proficiency
 from .state import CatalystState, SkillEvaluation
 
-# Dedicated LLM — low temperature for consistent scoring
-_llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
-    temperature=0.1,
-)
+# Lazy-loaded LLM — created on first call, not at import time
+_llm = None
+
+def _get_llm():
+    global _llm
+    if _llm is None:
+        _llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1)
+    return _llm
 
 _SYSTEM_PROMPT = """
 You are an expert technical assessor. You evaluate interview answers strictly
@@ -60,7 +63,7 @@ def run(state: CatalystState) -> dict:
             break
 
     # 1. Get LLM qualitative score
-    structured_llm = _llm.with_structured_output(_LLMEvaluation)
+    structured_llm = _get_llm().with_structured_output(_LLMEvaluation)
     eval_prompt = (
         f"Skill being assessed: {current_skill}\n\n"
         f"Interview conversation (last 2 turns):\n"

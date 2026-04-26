@@ -1,1 +1,2 @@
-from agents import skill_extractor, interviewer, evaluator, mentor
+# agents package — intentionally empty
+# supervisor.py imports each agent directly

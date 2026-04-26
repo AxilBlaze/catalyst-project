@@ -13,11 +13,14 @@ from data.resource_kb import get_resources_for_skill
 from data.skill_graph import get_adjacent_skills, get_prerequisites
 from .state import CatalystState
 
-# Dedicated LLM — higher creativity for coaching output
-_llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
-    temperature=0.7,
-)
+# Lazy-loaded LLM — created on first call, not at import time
+_llm = None
+
+def _get_llm():
+    global _llm
+    if _llm is None:
+        _llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.7)
+    return _llm
 
 _SYSTEM_PROMPT = """
 You are a world-class career mentor and learning coach.
@@ -90,7 +93,7 @@ Generate the full learning plan now. For each skill gap:
 End the plan with a "Strengths to Leverage" section.
 """
 
-    response = _llm.invoke([
+    response = _get_llm().invoke([
         SystemMessage(content=_SYSTEM_PROMPT),
         HumanMessage(content=prompt)
     ])

@@ -9,11 +9,14 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 from .state import CatalystState
 
-# Dedicated LLM — higher creativity for question generation
-_llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
-    temperature=0.8,
-)
+# Lazy-loaded LLM — created on first call, not at import time
+_llm = None
+
+def _get_llm():
+    global _llm
+    if _llm is None:
+        _llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.8)
+    return _llm
 
 _SYSTEM_PROMPT = """
 You are a Staff Engineer conducting a technical interview.
@@ -47,7 +50,7 @@ def run(state: CatalystState) -> dict:
     if not any(isinstance(m, HumanMessage) for m in recent):
         recent = [HumanMessage(content="I am ready for my next question.")]
 
-    response = _llm.invoke(
+    response = _get_llm().invoke(
         [SystemMessage(content=_SYSTEM_PROMPT), HumanMessage(content=skill_prompt)] + recent
     )
 
