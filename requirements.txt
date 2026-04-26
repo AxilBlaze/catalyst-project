@@ -7,5 +7,5 @@ PyMuPDF
 python-dotenv
 pydantic
 networkx
-chromadb
 sentence-transformers
+numpy

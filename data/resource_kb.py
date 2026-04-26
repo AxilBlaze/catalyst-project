@@ -1,123 +1,183 @@
+"""
+Resource Knowledge Base
+────────────────────────
+ChromaDB-free implementation:
+  - Resources stored in a simple Python dict keyed by skill
+  - Semantic similarity computed directly via sentence-transformers cosine similarity
+  - No external vector DB, no protobuf conflicts, no ONNX download on cloud
+"""
+from __future__ import annotations
 import os
-import chromadb
-from chromadb.utils import embedding_functions
+import numpy as np
 
-# Persistent ChromaDB stored in project root
-_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "chroma_db")
-_client = chromadb.PersistentClient(path=_DB_PATH)
-_ef = embedding_functions.DefaultEmbeddingFunction()
+# Lazy-loaded sentence-transformer model
+_model = None
 
-# Collections
-_resource_col = _client.get_or_create_collection("learning_resources", embedding_function=_ef)
-_gold_col = _client.get_or_create_collection("gold_answers", embedding_function=_ef)
-
-# --- Curated Learning Resources ---
-RESOURCES = [
-    # Python
-    {"id": "py1", "skill": "Python", "title": "Python Official Tutorial", "url": "https://docs.python.org/3/tutorial/", "type": "documentation", "hours": 8},
-    {"id": "py2", "skill": "Python", "title": "Real Python – Advanced Python", "url": "https://realpython.com/tutorials/advanced/", "type": "article", "hours": 10},
-    {"id": "py3", "skill": "Python", "title": "Build a CLI Tool with Click – Project", "url": "https://realpython.com/python-click/", "type": "project", "hours": 5},
-    # Django
-    {"id": "dj1", "skill": "Django", "title": "Django Official Tutorial", "url": "https://docs.djangoproject.com/en/stable/intro/tutorial01/", "type": "documentation", "hours": 6},
-    {"id": "dj2", "skill": "Django", "title": "Django REST Framework Tutorial", "url": "https://www.django-rest-framework.org/tutorial/quickstart/", "type": "documentation", "hours": 8},
-    {"id": "dj3", "skill": "Django", "title": "Build a Blog API – Project", "url": "https://learndjango.com/tutorials/django-rest-framework-tutorial-todo-api", "type": "project", "hours": 10},
-    # FastAPI
-    {"id": "fa1", "skill": "FastAPI", "title": "FastAPI Official Tutorial", "url": "https://fastapi.tiangolo.com/tutorial/", "type": "documentation", "hours": 6},
-    {"id": "fa2", "skill": "FastAPI", "title": "FastAPI + PostgreSQL CRUD – Project", "url": "https://testdriven.io/blog/fastapi-crud/", "type": "project", "hours": 8},
-    # Docker
-    {"id": "dk1", "skill": "Docker", "title": "Docker Get Started", "url": "https://docs.docker.com/get-started/", "type": "documentation", "hours": 4},
-    {"id": "dk2", "skill": "Docker", "title": "Dockerize a Python App – Project", "url": "https://docs.docker.com/language/python/", "type": "project", "hours": 3},
-    {"id": "dk3", "skill": "Docker", "title": "Docker Compose for Django + PostgreSQL", "url": "https://docs.docker.com/samples/django/", "type": "project", "hours": 4},
-    # SQL
-    {"id": "sq1", "skill": "SQL", "title": "SQLZoo – Interactive SQL Tutorial", "url": "https://sqlzoo.net/wiki/SQL_Tutorial", "type": "course", "hours": 8},
-    {"id": "sq2", "skill": "SQL", "title": "Mode SQL Tutorial – Intermediate", "url": "https://mode.com/sql-tutorial/", "type": "course", "hours": 5},
-    {"id": "sq3", "skill": "SQL", "title": "Use The Index, Luke – Query Optimization", "url": "https://use-the-index-luke.com/", "type": "documentation", "hours": 6},
-    # PostgreSQL
-    {"id": "pg1", "skill": "PostgreSQL", "title": "PostgreSQL Official Tutorial", "url": "https://www.postgresql.org/docs/current/tutorial.html", "type": "documentation", "hours": 5},
-    {"id": "pg2", "skill": "PostgreSQL", "title": "PostgreSQL Crash Course – Video", "url": "https://www.youtube.com/watch?v=qw--VYLpxG4", "type": "video", "hours": 4},
-    # REST APIs
-    {"id": "re1", "skill": "REST APIs", "title": "REST API Design Best Practices", "url": "https://www.freecodecamp.org/news/rest-api-design-best-practices-build-a-rest-api/", "type": "article", "hours": 3},
-    {"id": "re2", "skill": "REST APIs", "title": "HTTP Status Codes Reference – MDN", "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Status", "type": "documentation", "hours": 1},
-    # Machine Learning
-    {"id": "ml1", "skill": "Machine Learning", "title": "fast.ai Practical Deep Learning", "url": "https://course.fast.ai/", "type": "course", "hours": 40},
-    {"id": "ml2", "skill": "Machine Learning", "title": "Kaggle Learn – Intro to ML", "url": "https://www.kaggle.com/learn/intro-to-machine-learning", "type": "course", "hours": 5},
-    {"id": "ml3", "skill": "Machine Learning", "title": "Hands-On ML – Aurélien Géron", "url": "https://github.com/ageron/handson-ml3", "type": "book", "hours": 60},
-    # System Design
-    {"id": "sd1", "skill": "System Design", "title": "System Design Primer – GitHub", "url": "https://github.com/donnemartin/system-design-primer", "type": "documentation", "hours": 20},
-    {"id": "sd2", "skill": "System Design", "title": "Grokking System Design Interview", "url": "https://www.educative.io/courses/grokking-the-system-design-interview", "type": "course", "hours": 30},
-    # Microservices
-    {"id": "ms1", "skill": "Microservices", "title": "Microservices.io Patterns", "url": "https://microservices.io/patterns/", "type": "documentation", "hours": 8},
-    {"id": "ms2", "skill": "Microservices", "title": "Build Microservices with FastAPI – Project", "url": "https://testdriven.io/blog/fastapi-microservices/", "type": "project", "hours": 12},
-    # React
-    {"id": "rx1", "skill": "React", "title": "React Official Docs – Learn React", "url": "https://react.dev/learn", "type": "documentation", "hours": 10},
-    {"id": "rx2", "skill": "React", "title": "Full Stack Open – React Module", "url": "https://fullstackopen.com/en/part1", "type": "course", "hours": 15},
-    # AWS
-    {"id": "aw1", "skill": "AWS", "title": "AWS Free Tier – Hands-on Labs", "url": "https://aws.amazon.com/free/", "type": "project", "hours": 10},
-    {"id": "aw2", "skill": "AWS", "title": "AWS Cloud Practitioner Essentials", "url": "https://aws.amazon.com/training/digital/aws-cloud-practitioner-essentials/", "type": "course", "hours": 6},
-    # Kubernetes
-    {"id": "k8s1", "skill": "Kubernetes", "title": "Kubernetes Official Tutorial", "url": "https://kubernetes.io/docs/tutorials/", "type": "documentation", "hours": 8},
-    {"id": "k8s2", "skill": "Kubernetes", "title": "Deploy a Django App on Kubernetes – Project", "url": "https://testdriven.io/blog/django-kubernetes/", "type": "project", "hours": 10},
-    # LangChain
-    {"id": "lc1", "skill": "LangChain", "title": "LangChain Official Docs", "url": "https://python.langchain.com/docs/get_started/introduction", "type": "documentation", "hours": 8},
-    {"id": "lc2", "skill": "LangChain", "title": "Build a RAG App – Project", "url": "https://python.langchain.com/docs/use_cases/question_answering/", "type": "project", "hours": 6},
-    # CI/CD
-    {"id": "ci1", "skill": "CI/CD", "title": "GitHub Actions Official Docs", "url": "https://docs.github.com/en/actions", "type": "documentation", "hours": 5},
-    {"id": "ci2", "skill": "CI/CD", "title": "CI/CD for Django – Practical Guide", "url": "https://testdriven.io/blog/django-github-actions/", "type": "project", "hours": 4},
-    # Redis
-    {"id": "rd1", "skill": "Redis", "title": "Redis Official Tutorial", "url": "https://redis.io/docs/manual/", "type": "documentation", "hours": 4},
-    {"id": "rd2", "skill": "Redis", "title": "Redis with Django – Caching – Project", "url": "https://realpython.com/caching-in-django-with-redis/", "type": "project", "hours": 3},
-]
+def _get_model():
+    global _model
+    if _model is None:
+        from sentence_transformers import SentenceTransformer
+        _model = SentenceTransformer("all-MiniLM-L6-v2")
+    return _model
 
 
-def _seed_resources():
-    """Seed resources into ChromaDB if empty."""
-    if _resource_col.count() > 0:
-        return
-    docs = [f"{r['title']} – {r['skill']} ({r['type']}, ~{r['hours']}h)" for r in RESOURCES]
-    ids = [r["id"] for r in RESOURCES]
-    metas = [{"skill": r["skill"], "url": r["url"], "type": r["type"], "hours": r["hours"], "title": r["title"]} for r in RESOURCES]
-    _resource_col.add(documents=docs, ids=ids, metadatas=metas)
+# --- Curated Learning Resources (keyed by skill for O(1) lookup) ---
+_RESOURCES: dict[str, list[dict]] = {
+    "Python": [
+        {"title": "Python Official Tutorial", "url": "https://docs.python.org/3/tutorial/", "type": "documentation", "hours": 8},
+        {"title": "Real Python – Advanced Python", "url": "https://realpython.com/tutorials/advanced/", "type": "article", "hours": 10},
+        {"title": "Build a CLI Tool with Click", "url": "https://realpython.com/python-click/", "type": "project", "hours": 5},
+    ],
+    "Django": [
+        {"title": "Django Official Tutorial", "url": "https://docs.djangoproject.com/en/stable/intro/tutorial01/", "type": "documentation", "hours": 6},
+        {"title": "Django REST Framework Tutorial", "url": "https://www.django-rest-framework.org/tutorial/quickstart/", "type": "documentation", "hours": 8},
+        {"title": "Build a Blog API – Project", "url": "https://learndjango.com/tutorials/django-rest-framework-tutorial-todo-api", "type": "project", "hours": 10},
+    ],
+    "FastAPI": [
+        {"title": "FastAPI Official Tutorial", "url": "https://fastapi.tiangolo.com/tutorial/", "type": "documentation", "hours": 6},
+        {"title": "FastAPI + PostgreSQL CRUD", "url": "https://testdriven.io/blog/fastapi-crud/", "type": "project", "hours": 8},
+    ],
+    "Docker": [
+        {"title": "Docker Get Started", "url": "https://docs.docker.com/get-started/", "type": "documentation", "hours": 4},
+        {"title": "Dockerize a Python App", "url": "https://docs.docker.com/language/python/", "type": "project", "hours": 3},
+        {"title": "Docker Compose for Django + PostgreSQL", "url": "https://docs.docker.com/samples/django/", "type": "project", "hours": 4},
+    ],
+    "SQL": [
+        {"title": "SQLZoo – Interactive SQL Tutorial", "url": "https://sqlzoo.net/wiki/SQL_Tutorial", "type": "course", "hours": 8},
+        {"title": "Mode SQL Tutorial – Intermediate", "url": "https://mode.com/sql-tutorial/", "type": "course", "hours": 5},
+        {"title": "Use The Index, Luke – Query Optimization", "url": "https://use-the-index-luke.com/", "type": "documentation", "hours": 6},
+    ],
+    "PostgreSQL": [
+        {"title": "PostgreSQL Official Tutorial", "url": "https://www.postgresql.org/docs/current/tutorial.html", "type": "documentation", "hours": 5},
+        {"title": "PostgreSQL Crash Course", "url": "https://www.youtube.com/watch?v=qw--VYLpxG4", "type": "video", "hours": 4},
+    ],
+    "REST APIs": [
+        {"title": "REST API Design Best Practices", "url": "https://www.freecodecamp.org/news/rest-api-design-best-practices-build-a-rest-api/", "type": "article", "hours": 3},
+        {"title": "HTTP Status Codes Reference – MDN", "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Status", "type": "documentation", "hours": 1},
+    ],
+    "Machine Learning": [
+        {"title": "fast.ai Practical Deep Learning", "url": "https://course.fast.ai/", "type": "course", "hours": 40},
+        {"title": "Kaggle Learn – Intro to ML", "url": "https://www.kaggle.com/learn/intro-to-machine-learning", "type": "course", "hours": 5},
+        {"title": "Hands-On ML – Aurélien Géron", "url": "https://github.com/ageron/handson-ml3", "type": "book", "hours": 60},
+    ],
+    "System Design": [
+        {"title": "System Design Primer – GitHub", "url": "https://github.com/donnemartin/system-design-primer", "type": "documentation", "hours": 20},
+        {"title": "Grokking System Design Interview", "url": "https://www.educative.io/courses/grokking-the-system-design-interview", "type": "course", "hours": 30},
+    ],
+    "Microservices": [
+        {"title": "Microservices.io Patterns", "url": "https://microservices.io/patterns/", "type": "documentation", "hours": 8},
+        {"title": "Build Microservices with FastAPI", "url": "https://testdriven.io/blog/fastapi-microservices/", "type": "project", "hours": 12},
+    ],
+    "React": [
+        {"title": "React Official Docs – Learn React", "url": "https://react.dev/learn", "type": "documentation", "hours": 10},
+        {"title": "Full Stack Open – React Module", "url": "https://fullstackopen.com/en/part1", "type": "course", "hours": 15},
+    ],
+    "AWS": [
+        {"title": "AWS Free Tier – Hands-on Labs", "url": "https://aws.amazon.com/free/", "type": "project", "hours": 10},
+        {"title": "AWS Cloud Practitioner Essentials", "url": "https://aws.amazon.com/training/digital/aws-cloud-practitioner-essentials/", "type": "course", "hours": 6},
+    ],
+    "Kubernetes": [
+        {"title": "Kubernetes Official Tutorial", "url": "https://kubernetes.io/docs/tutorials/", "type": "documentation", "hours": 8},
+        {"title": "Deploy a Django App on Kubernetes", "url": "https://testdriven.io/blog/django-kubernetes/", "type": "project", "hours": 10},
+    ],
+    "LangChain": [
+        {"title": "LangChain Official Docs", "url": "https://python.langchain.com/docs/get_started/introduction", "type": "documentation", "hours": 8},
+        {"title": "Build a RAG App – Project", "url": "https://python.langchain.com/docs/use_cases/question_answering/", "type": "project", "hours": 6},
+    ],
+    "CI/CD": [
+        {"title": "GitHub Actions Official Docs", "url": "https://docs.github.com/en/actions", "type": "documentation", "hours": 5},
+        {"title": "CI/CD for Django – Practical Guide", "url": "https://testdriven.io/blog/django-github-actions/", "type": "project", "hours": 4},
+    ],
+    "Redis": [
+        {"title": "Redis Official Tutorial", "url": "https://redis.io/docs/manual/", "type": "documentation", "hours": 4},
+        {"title": "Redis with Django – Caching", "url": "https://realpython.com/caching-in-django-with-redis/", "type": "project", "hours": 3},
+    ],
+}
 
-
-def _seed_gold_answers():
-    """Seed gold standard answers into ChromaDB if empty."""
-    from data.skill_graph import GOLD_STANDARD_ANSWERS
-    if _gold_col.count() > 0:
-        return
-    for skill, answer in GOLD_STANDARD_ANSWERS.items():
-        _gold_col.add(documents=[answer], ids=[f"gold_{skill}"], metadatas=[{"skill": skill}])
+# --- Gold standard answers for semantic similarity scoring ---
+_GOLD_ANSWERS: dict[str, str] = {
+    "Python": (
+        "I use Python extensively for building scalable backend services. "
+        "I leverage features like generators, context managers, dataclasses, and async/await. "
+        "I write type-annotated code and use pytest for comprehensive testing."
+    ),
+    "Django": (
+        "I build production Django applications with custom middleware, signals, and celery tasks. "
+        "I optimise ORM queries using select_related, prefetch_related, and database indexes. "
+        "I've implemented DRF APIs with JWT authentication and custom permission classes."
+    ),
+    "FastAPI": (
+        "I use FastAPI with Pydantic models for strict input validation and automatic OpenAPI docs. "
+        "I implement async endpoints with SQLAlchemy async sessions and Redis caching. "
+        "I write dependency injection using FastAPI's Depends system for clean, testable code."
+    ),
+    "Docker": (
+        "I containerise applications using multi-stage Dockerfiles to minimise image size. "
+        "I use Docker Compose for local development with services like PostgreSQL and Redis. "
+        "I've pushed images to ECR and deployed via ECS in production environments."
+    ),
+    "SQL": (
+        "I write complex SQL queries with CTEs, window functions, and subqueries. "
+        "I analyse query execution plans and add indexes to eliminate full table scans. "
+        "I have experience with both OLTP and OLAP query patterns."
+    ),
+    "PostgreSQL": (
+        "I use PostgreSQL-specific features like JSONB columns, full-text search, and advisory locks. "
+        "I manage schema migrations carefully with rollback strategies. "
+        "I've configured read replicas and connection pooling with PgBouncer for high-traffic systems."
+    ),
+    "Machine Learning": (
+        "I build end-to-end ML pipelines: data cleaning, feature engineering, model training, and evaluation. "
+        "I've worked with scikit-learn, XGBoost, and PyTorch. "
+        "I track experiments with MLflow and deploy models as REST APIs."
+    ),
+    "System Design": (
+        "I design systems by first clarifying requirements and estimating scale. "
+        "I consider CAP theorem trade-offs, use caching strategically, and design for horizontal scalability. "
+        "I document designs with sequence diagrams and capacity planning spreadsheets."
+    ),
+    "REST APIs": (
+        "I design RESTful APIs following proper resource naming, HTTP verb semantics, and status codes. "
+        "I implement versioning, rate limiting, and pagination. "
+        "I document APIs with OpenAPI/Swagger specs and write integration tests."
+    ),
+    "Microservices": (
+        "I've decomposed monoliths into microservices using domain-driven design principles. "
+        "I implement inter-service communication with REST and async message queues (RabbitMQ/Kafka). "
+        "I handle distributed tracing, circuit breakers, and idempotent operations."
+    ),
+}
 
 
 def get_resources_for_skill(skill: str, top_k: int = 3) -> list[dict]:
-    """Retrieve top-k learning resources for a skill via semantic search."""
-    results = _resource_col.query(
-        query_texts=[f"learning resources for {skill}"],
-        n_results=min(top_k, _resource_col.count()),
-        where={"skill": skill}
-    )
-    resources = []
-    if results and results["metadatas"]:
-        for meta, doc in zip(results["metadatas"][0], results["documents"][0]):
-            resources.append({**meta, "description": doc})
-    return resources
+    """Return top-k curated resources for the given skill."""
+    resources = _RESOURCES.get(skill, [])
+    if not resources:
+        # Fuzzy fallback: try case-insensitive match
+        skill_lower = skill.lower()
+        for key, value in _RESOURCES.items():
+            if skill_lower in key.lower() or key.lower() in skill_lower:
+                resources = value
+                break
+    return resources[:top_k]
 
 
 def get_semantic_similarity(answer: str, skill: str) -> float:
-    """Compare answer to gold standard, return similarity score 0.0-1.0."""
-    results = _gold_col.query(
-        query_texts=[answer],
-        n_results=1,
-        where={"skill": skill}
-    )
-    if results and results["distances"] and results["distances"][0]:
-        distance = results["distances"][0][0]
-        # ChromaDB returns cosine distance (0=identical, 2=opposite)
-        # Convert to similarity score 0-1
-        similarity = max(0.0, 1.0 - (distance / 2.0))
-        return round(similarity, 3)
-    return 0.0
+    """
+    Compute cosine similarity between the candidate's answer
+    and the gold-standard answer for the skill, using sentence-transformers.
+    Returns a score in [0.0, 1.0].
+    """
+    gold = _GOLD_ANSWERS.get(skill)
+    if not gold or not answer.strip():
+        return 0.5  # neutral score if no gold answer exists
 
-
-# Seed on import
-_seed_resources()
-_seed_gold_answers()
+    try:
+        model = _get_model()
+        embeddings = model.encode([answer, gold], normalize_embeddings=True)
+        # Cosine similarity = dot product of normalised vectors
+        similarity = float(np.dot(embeddings[0], embeddings[1]))
+        # Clamp to [0, 1]
+        return round(max(0.0, min(1.0, similarity)), 3)
+    except Exception:
+        return 0.5  # graceful fallback
